@@ -1,0 +1,83 @@
+#!/bin/bash
+
+case $# in
+  2)
+    CONFIG="$1"
+    stormxml="$2"
+    ;;
+  *)
+    printf 1>&2 'Usage: %s <config> <stormxml>\n' "$0"
+    exit 1
+    ;;
+esac
+
+if ! . "$CONFIG"
+then
+  printf 1>&2 '%2: cannot read config %s\n' "$0" "$CONFIG"
+  exit 1
+fi
+
+set -e
+
+XPATH_DATA_LINKS='/atom:feed/atom:entry/atom:link[@rel="http://esipfed.org/ns/fedsearch/1.0/data#"]'
+
+start=1
+limit=1000
+
+stormid=$( xmlstarlet sel -T -t -m /storm -v @stormid -n "$stormxml" )
+
+
+# GHRC opensearch request parameters for a storm
+reqparams_file="$OUTPUT_GHRC_BY_STORM_DIR/$stormid.ghrc-request-parameters"
+xmlstarlet sel -T -t -m //storm -o \&aoi= -v bbox -o \&from= -v from -o \&thru= -v thru -n "$stormxml" > "$reqparams_file"
+reqparams=$( cat "$reqparams_file" )
+
+
+# GHRC opensearch dataset results for a storm
+datasets_file="$CACHE_GHRC_BY_STORM_DIR/$stormid.ghrc-datasets"
+"$FETCH" "$GHRC_GHOST"'?q=ds&format=atom'"$reqparams" "$datasets_file"
+
+
+# list of datasets (shortname osddurl title) for a storm
+dslist="$OUTPUT_GHRC_BY_STORM_DIR/$stormid.ghrc-dslist"
+xmlstarlet sel -N atom="$XMLNS_ATOM" -T -t -m /atom:feed/atom:entry -v 'atom:link[@rel="search"]/@href' -o ' ' -v atom:title -n "$datasets_file" | sed -e 's,^.*\&ds=\([^&]*\)\&.*$,\1 &,' > "$dslist"
+
+
+# GHRC opensearch granule results for a storm
+cat "$dslist" | while read ds dsosddurl dstitle
+do
+  osdd="$CACHE_GHRC_BY_STORM_DIR/${stormid}.ghrc-dataset.${ds}.osdd"
+  "$FETCH" "$dsosddurl" "$osdd"
+  xmlstarlet sel \
+      -N os="$XMLNS_OS" \
+      -N hydro="$XMLNS_HYDRO" \
+      -N time="$XMLNS_TIME" \
+      -N geo="$XMLNS_GEO" \
+      -T -t -m /os:OpenSearchDescription -v os:Url/@template -o ' ' \
+      -v geo:box -o ' ' -v time:start -o ' ' -v time:end -n \
+      "$osdd" \
+  | while read url box from thru
+    do
+      file="$CACHE_GHRC_BY_STORM_DIR/${stormid}.ghrc-granules.${ds}.${limit}.${start}.atom"
+      url=${url/\{geo:box\?\}/"$box"}
+      url=${url/\{time:start\?\}/"$from"}
+      url=${url/\{time:end\?\}/"$thru"}
+      url=${url/\{os:startIndex\?\}/"$start"}
+      url=${url/\{os:count\?\}/"$limit"}
+      "$FETCH" "$url" "$file"
+      link_count=$(xmlstarlet sel \
+          -N atom="$XMLNS_ATOM" \
+          -T -t -m / -v 'count('"$XPATH_DATA_LINKS"')' -n \
+          "$file")
+      if [ "$link_count" -gt 0 ]; then
+        xmlstarlet sel \
+            -N atom="$XMLNS_ATOM" \
+            -T -t -m "$XPATH_DATA_LINKS" \
+            -o "$stormid,$ds", -v ../atom:title -o , -v @length -o , -v @href -n \
+            "$file"
+      fi
+    done
+done
+
+exit
+

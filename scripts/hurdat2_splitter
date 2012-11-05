@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# Split a HURDAT2 file into separate files (1 per storm)
+
+if [ $# -eq 0 ]
+then
+  printf 'Usage: %s output_dir [input_file...]\n' "$0"
+  exit 1
+fi
+
+output_dir="$1"
+shift
+
+if ! [ -d "$output_dir" ]
+then
+  printf '%s: output is not a directory: %s\n' "$0" "$output_dir"
+  exit 1
+fi
+
+cat "$@" | while read line
+do
+  case ${#line} in
+     34)
+         stormfile="$output_dir"/"${line:0:8}".hurdat2
+         printf > "$stormfile" '%s\n' "$line"
+         ;;
+    117)
+         : ${stormfile:?}
+         printf >> "$stormfile" '%s\n' "$line"
+         ;;
+      *)
+         : # skipping nonmatches
+         ;;
+  esac
+done
+

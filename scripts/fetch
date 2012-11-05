@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# Fetch a remote file unless the local copy exists
+
+case $# in
+  2) url="$1" ; copy="$2" ;;
+  *) printf 'Usage: %s url localcopy\n' "$0" ; exit 1 ;;
+esac
+
+copyurl="$copy"..url
+
+if [ -e "$copy" ]
+then
+  if [ -e "$copyurl" ]
+  then
+    oldurl=$(cat "$copyurl")
+    if ! [ "$url" = "$oldurl" ]
+    then
+      printf 1>&2 '%s: url mismatch in %s\n' "$0" "$copyurl"
+      exit 1
+    fi
+  fi
+  exit
+fi
+
+copydir=$(dirname "$copy")
+
+if ! [ -d "$copydir" ]
+then
+  if ! mkdir -p "$copydir"
+  then
+    printf '%s: failed to create output directory: %s\n' "$0" "$copydir"
+    exit 1
+  fi
+fi
+
+printf > "$copy"..url '%s\n' "$url"
+
+/usr/bin/time --portability --output="$copy"..time \
+    curl \
+        --remote-time \
+        --silent \
+        --show-error \
+        --dump-header "$copy"..hdr \
+        --output "$copy" \
+        "$url"
+
